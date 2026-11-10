@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar sesión | Transporte Público</title>
+    <link rel="stylesheet" href="/estilos.css">
+</head>
+<body>
+
+    <main class="acceso">
+        <h1>Transporte Público</h1>
+        <p>Sistema de gestión de rutas, horarios y boletos</p>
+
+        {{mensaje}}
+
+        <div class="caja">
+            <form method="post" action="/login">
+                <label for="correo">Correo</label>
+                <input type="email" id="correo" name="correo" required>
+
+                <label for="contrasena">Contraseña</label>
+                <input type="password" id="contrasena" name="contrasena" required>
+
+                <button>Iniciar sesión</button>
+            </form>
+            <p>¿Es pasajero y no tiene cuenta? <a href="/registro">Regístrese aquí</a></p>
+        </div>
+
+        <!-- Usuarios de prueba (vienen en el script de la base de datos) -->
+        <div class="caja">
+            <small><strong>Cuentas de prueba</strong></small>
+            <table>
+                <tr><th>Rol</th><th>Correo</th><th>Contraseña</th></tr>
+                <tr><td>Administrador</td><td>admin@transporte.com</td><td>admin123</td></tr>
+                <tr><td>Conductor</td><td>conductor1@transporte.com</td><td>conductor123</td></tr>
+                <tr><td>Pasajero</td><td>pasajero@transporte.com</td><td>pasajero123</td></tr>
+            </table>
+        </div>
+    </main>
+
+</body>
+</html>
