@@ -14,6 +14,23 @@
   PACKAGES.forEach(function (p) { PKG[p.id] = p; });
   CLASSES.forEach(function (c) { byId[c.id] = c; });
 
+  // Código fuente real: lista plana de archivos, en el orden de la exposición
+  var CODE = window.UML_CODE || [];
+  var FILES = [];
+  var fileOfClass = {};   // clase del UML -> su archivo .java
+  var daoOfPkg = {};      // paquete -> su DAO
+  CODE.forEach(function (g) {
+    var color = g.color || (PKG[g.id] && PKG[g.id].color) || '#94a0b0';
+    g.archivos.forEach(function (f) {
+      f.grupo = g.label;
+      f.color = color;
+      f.index = FILES.length;
+      FILES.push(f);
+      if (f.clase) fileOfClass[f.clase] = f;
+      if (f.tipo === 'dao') daoOfPkg[g.id] = f;
+    });
+  });
+
   var CARD_W = 340;
   var MIN_Z = 0.35, MAX_Z = 2.4;
 
@@ -22,7 +39,7 @@
     selected: null, filter: 'all', query: '',
     dragging: null, dragDX: 0, dragDY: 0,
     panning: false, panStartX: 0, panStartY: 0, gestureRect: null,
-    codeLang: 'java', theme: 'dark'
+    codeTab: 'clase', theme: 'dark', openFile: null
   };
 
   function $(s, r) { return (r || document).querySelector(s); }
@@ -31,6 +48,69 @@
   function esc(s) { return String(s).replace(/[&<>"]/g, function (m) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m]; }); }
 
   var dom = {};
+
+  /* ----------------------- Resaltado de código ----------------------- */
+  var JAVA_KW = ('abstract boolean break byte case catch char class continue default do double else enum extends ' +
+    'final finally float for if implements import instanceof int interface long new package private protected ' +
+    'public return short static super switch this throw throws try void while null true false var').split(' ');
+  var SQL_KW = ('SET NAMES CREATE DATABASE IF NOT EXISTS CHARACTER COLLATE USE DROP TABLE PRIMARY KEY FOREIGN ' +
+    'REFERENCES ON DELETE CASCADE AUTO_INCREMENT NULL DEFAULT UNIQUE INSERT INTO VALUES TRUE FALSE INT VARCHAR ' +
+    'DECIMAL BOOLEAN DATE TIME DATETIME TEXT').split(' ');
+
+  function tokenRegex(lang) {
+    if (lang === 'sql') {
+      return new RegExp('(--[^\\n]*)|(\'(?:\\\\.|[^\'\\\\])*\')|\\b(\\d+(?:\\.\\d+)?)\\b|\\b(' +
+        SQL_KW.join('|') + ')\\b|\\b(SHA2|CURDATE|NOW)\\b', 'g');
+    }
+    return new RegExp('(\\/\\*[\\s\\S]*?\\*\\/|\\/\\/[^\\n]*)|("(?:\\\\.|[^"\\\\])*"|\'(?:\\\\.|[^\'\\\\])\')|' +
+      '\\b(\\d+(?:\\.\\d+)?)\\b|\\b(' + JAVA_KW.join('|') + ')\\b|\\b([A-Z][A-Za-z0-9_]*)\\b|(@[A-Za-z]+)', 'g');
+  }
+
+  // Devuelve un arreglo de líneas en HTML con colores
+  function highlight(code, lang) {
+    var clases = lang === 'sql'
+      ? [null, 'tk-com', 'tk-str', 'tk-num', 'tk-kw', 'tk-fn']
+      : [null, 'tk-com', 'tk-str', 'tk-num', 'tk-kw', 'tk-ty', 'tk-ann'];
+    var re = tokenRegex(lang);
+    var lines = [''];
+    function push(text, cls) {
+      var parts = text.split('\n');
+      parts.forEach(function (part, i) {
+        if (i > 0) lines.push('');
+        if (!part) return;
+        lines[lines.length - 1] += cls ? '<span class="' + cls + '">' + esc(part) + '</span>' : esc(part);
+      });
+    }
+    var last = 0, m;
+    while ((m = re.exec(code)) !== null) {
+      if (m.index > last) push(code.slice(last, m.index), null);
+      for (var g = 1; g < m.length; g++) {
+        if (m[g] !== undefined) { push(m[0], clases[g]); break; }
+      }
+      last = re.lastIndex;
+    }
+    if (last < code.length) push(code.slice(last), null);
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+    return lines;
+  }
+
+  function codeHtml(f) {
+    return highlight(f.codigo, f.lenguaje).map(function (l, i) {
+      return '<div class="cl"><span class="ln" data-n="' + (i + 1) + '"></span><span class="lc">' + l + '</span></div>';
+    }).join('');
+  }
+
+  function lineCount(f) { return f.codigo.replace(/\n$/, '').split('\n').length; }
+
+  function copyText(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); toast('Código copiado'); }
+    catch (e) { toast('No se pudo copiar'); }
+    document.body.removeChild(ta);
+  }
 
   /* ----------------------- Sidebar ----------------------- */
   function buildSidebar() {
@@ -42,6 +122,100 @@
       list.appendChild(pkgButton(p.id, p.label, n, false));
     });
     buildIndex();
+    buildCodeIndex();
+  }
+
+  /* ----------------------- Índice de código fuente ----------------------- */
+  var TIPO_TAG = { dao: 'DAO', web: 'web', sql: 'SQL', main: 'main', conexion: 'BD' };
+
+  function buildCodeIndex() {
+    var idx = $('#codeIndex');
+    if (!idx) return;
+    idx.innerHTML = '';
+    var q = state.query;
+    var shown = 0;
+    CODE.forEach(function (g) {
+      var items = g.archivos.filter(function (f) {
+        return !q || f.nombre.toLowerCase().indexOf(q) !== -1 || f.codigo.toLowerCase().indexOf(q) !== -1;
+      });
+      if (!items.length) return;
+      var group = el('div', 'idx-group');
+      var head = el('div', 'idx-pkg');
+      head.style.setProperty('--pkg', items[0].color);
+      head.innerHTML = '<span class="sw"></span>' + esc(g.label);
+      group.appendChild(head);
+      items.forEach(function (f) {
+        var b = el('button', 'idx-item file-item' + (state.openFile === f.index ? ' active' : ''));
+        b.dataset.file = f.index;
+        b.style.setProperty('--pkg', f.color);
+        b.title = f.ruta;
+        b.innerHTML = '<span class="file-name">' + esc(f.nombre) + '</span>' +
+          (TIPO_TAG[f.tipo] ? '<span class="file-tag">' + TIPO_TAG[f.tipo] + '</span>' : '');
+        b.addEventListener('click', function () { openFile(f.index); });
+        group.appendChild(b);
+        shown++;
+      });
+      idx.appendChild(group);
+    });
+    if (!shown) idx.innerHTML = '<div class="idx-empty">Sin coincidencias.</div>';
+    var count = $('#codeCount');
+    if (count) count.textContent = FILES.length + ' archivos';
+  }
+
+  function syncCodeIndexActive() {
+    $$('.file-item').forEach(function (b) {
+      b.classList.toggle('active', Number(b.dataset.file) === state.openFile);
+    });
+  }
+
+  /* ----------------------- Visor de código ----------------------- */
+  function openFile(i) {
+    var f = FILES[i];
+    if (!f) return;
+    state.openFile = i;
+    dom.viewer.hidden = false;
+    dom.viewer.style.setProperty('--pkg', f.color);
+    $('#cvName').textContent = f.nombre;
+    $('#cvPath').textContent = f.ruta;
+    $('#cvMeta').innerHTML = '<span class="chip pkg">' + esc(f.grupo) + '</span>' +
+      '<span class="chip">' + lineCount(f) + ' líneas</span>';
+    $('#cvPos').textContent = (i + 1) + ' / ' + FILES.length;
+    $('#cvDiagram').style.display = f.clase ? '' : 'none';
+    $('#cvCode').innerHTML = codeHtml(f);
+    $('.cv-body', dom.viewer).scrollTop = 0;
+    if (window.innerWidth < 900) dom.sidebar.classList.add('collapsed'); // en celular, que no tape el código
+    syncCodeIndexActive();
+    var active = $('.file-item.active');
+    if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest' });
+  }
+
+  function closeViewer() {
+    if (dom.viewer.hidden) return;
+    dom.viewer.hidden = true;
+    state.openFile = null;
+    syncCodeIndexActive();
+  }
+
+  function stepFile(dir) {
+    if (state.openFile === null) return;
+    openFile((state.openFile + dir + FILES.length) % FILES.length);
+  }
+
+  function bindViewer() {
+    // Que el visor no mueva ni haga zoom al diagrama que está debajo
+    ['mousedown', 'click', 'wheel', 'touchstart', 'touchmove'].forEach(function (ev) {
+      dom.viewer.addEventListener(ev, function (e) { e.stopPropagation(); }, { passive: true });
+    });
+    $('#cvClose').addEventListener('click', closeViewer);
+    $('#cvPrev').addEventListener('click', function () { stepFile(-1); });
+    $('#cvNext').addEventListener('click', function () { stepFile(1); });
+    $('#cvCopy').addEventListener('click', function () {
+      if (state.openFile !== null) copyText(FILES[state.openFile].codigo);
+    });
+    $('#cvDiagram').addEventListener('click', function () {
+      var f = FILES[state.openFile];
+      if (f && f.clase) focusClass(f.clase);
+    });
   }
 
   function pkgButton(id, label, count, isAll) {
@@ -327,6 +501,7 @@
   }
 
   function focusClass(id) {
+    closeViewer();
     selectClass(id);
     var b = boxOf(id);
     var r = dom.canvas.getBoundingClientRect();
@@ -444,78 +619,56 @@
       '<div class="block"><h3><span class="dot dot-attr"></span>Atributos</h3><div class="list">' + attrs + '</div></div>' +
       '<div class="block"><h3><span class="dot dot-meth"></span>Métodos</h3><div class="list">' + meths + '</div></div>' +
       '<div class="block"><h3><span class="dot dot-rel"></span>Relaciones</h3><div class="list">' + relHtml + '</div></div>' +
-      '<div class="block">' +
-        '<div class="code-head"><h3 style="margin:0"><span class="dot dot-rel"></span>Código</h3>' +
-        '<div class="code-tabs"><button class="tab" data-lang="java">Java</button>' +
-        '<button class="tab" data-lang="ts">TypeScript</button></div></div>' +
-        '<div class="code-wrap"><pre class="code" id="codeBox"></pre>' +
-        '<button class="btn-copy" id="btnCopy">Copiar</button></div>' +
-      '</div>';
+      codeBlock(c);
 
     $('#inspClose').addEventListener('click', closeInspector);
-    $$('.tab', dom.inspBody).forEach(function (t) {
-      t.addEventListener('click', function () {
-        state.codeLang = t.dataset.lang;
-        paintTabs();
-        $('#codeBox').textContent = codeFor(c, state.codeLang);
-      });
-    });
-    $('#btnCopy').addEventListener('click', function () {
-      var code = $('#codeBox').textContent;
-      var ta = document.createElement('textarea');
-      ta.value = code;
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand('copy'); toast('Código copiado'); }
-      catch (e) { toast('No se pudo copiar'); }
-      document.body.removeChild(ta);
-    });
     $$('.rel-row', dom.inspBody).forEach(function (row) {
       row.addEventListener('click', function () { focusClass(row.dataset.goto); });
     });
-    paintTabs();
-    $('#codeBox').textContent = codeFor(c, state.codeLang);
+    bindCodeBlock(c);
   }
 
-  function paintTabs() {
-    $$('.tab', dom.inspBody).forEach(function (t) {
-      t.classList.toggle('active', t.dataset.lang === state.codeLang);
-    });
+  // Bloque "Código" del inspector: el archivo real de la clase y el DAO de su paquete
+  function codeFiles(c) {
+    var tabs = [];
+    if (fileOfClass[c.id]) tabs.push({ key: 'clase', file: fileOfClass[c.id] });
+    if (daoOfPkg[c.package]) tabs.push({ key: 'dao', file: daoOfPkg[c.package] });
+    return tabs;
   }
 
-  /* ----------------------- Code generation ----------------------- */
-  function mod(v) { return v === '+' ? 'public' : v === '#' ? 'protected' : 'private'; }
-  function tsType(t) {
-    if (t === 'int' || t === 'double') return 'number';
-    if (t === 'String') return 'string';
-    return t;
+  function codeBlock(c) {
+    var tabs = codeFiles(c);
+    if (!tabs.length) return '';
+    return '<div class="block">' +
+      '<div class="code-head"><h3 style="margin:0"><span class="dot dot-rel"></span>Código</h3>' +
+      '<div class="code-tabs">' + tabs.map(function (t) {
+        return '<button class="tab" data-tab="' + t.key + '">' + esc(t.file.nombre) + '</button>';
+      }).join('') + '</div></div>' +
+      '<div class="code-wrap"><div class="code code-lines" id="codeBox"></div>' +
+      '<button class="btn-copy" id="btnCopy">Copiar</button></div>' +
+      '<button class="btn-open" id="btnOpenCode">Abrir código completo</button>' +
+    '</div>';
   }
 
-  function codeFor(c, lang) {
-    var gen = RELATIONS.filter(function (r) { return r.source === c.id && r.type === 'generalization'; })[0];
-    var ext = gen ? ' extends ' + gen.target : '';
-
-    if (lang === 'java') {
-      var out = 'package ' + c.package + ';\n\n';
-      out += 'public ' + (c.isAbstract ? 'abstract ' : '') + 'class ' + c.name + ext + ' {\n';
-      c.attributes.forEach(function (a) { out += '    ' + mod(a.vis) + ' ' + a.type + ' ' + a.name + ';\n'; });
-      out += '\n';
-      c.methods.forEach(function (m) {
-        if (m.isAbstract) out += '    ' + mod(m.vis) + ' abstract ' + m.returnType + ' ' + m.name + '(' + m.params + ');\n';
-        else out += '    ' + mod(m.vis) + ' ' + m.returnType + ' ' + m.name + '(' + m.params + ') {\n        // TODO\n    }\n\n';
-      });
-      return out + '}';
+  function bindCodeBlock(c) {
+    var tabs = codeFiles(c);
+    if (!tabs.length) return;
+    function current() {
+      return (tabs.filter(function (t) { return t.key === state.codeTab; })[0] || tabs[0]).file;
     }
-
-    var ts = '// paquete: ' + c.package + '\n\n';
-    ts += 'export ' + (c.isAbstract ? 'abstract ' : '') + 'class ' + c.name + ext + ' {\n';
-    c.attributes.forEach(function (a) { ts += '    ' + mod(a.vis) + ' ' + a.name + ': ' + tsType(a.type) + ';\n'; });
-    ts += '\n';
-    c.methods.forEach(function (m) {
-      if (m.isAbstract) ts += '    ' + mod(m.vis) + ' abstract ' + m.name + '(' + m.params + '): ' + tsType(m.returnType) + ';\n';
-      else ts += '    ' + mod(m.vis) + ' ' + m.name + '(' + m.params + '): ' + tsType(m.returnType) + ' {\n        // TODO\n    }\n\n';
+    function paint() {
+      var f = current();
+      $$('.tab', dom.inspBody).forEach(function (t) {
+        t.classList.toggle('active', t.textContent === f.nombre);
+      });
+      $('#codeBox').innerHTML = codeHtml(f);
+    }
+    $$('.tab', dom.inspBody).forEach(function (t) {
+      t.addEventListener('click', function () { state.codeTab = t.dataset.tab; paint(); });
     });
-    return ts + '}';
+    $('#btnCopy').addEventListener('click', function () { copyText(current().codigo); });
+    $('#btnOpenCode').addEventListener('click', function () { openFile(current().index); });
+    paint();
   }
 
   /* ----------------------- Drag / pan ----------------------- */
@@ -634,6 +787,7 @@
     dom.search = $('#search');
     dom.toast = $('#toast');
     dom.toastMsg = $('#toastMsg');
+    dom.viewer = $('#codeViewer');
   }
 
   function bindControls() {
@@ -650,6 +804,7 @@
     dom.search.addEventListener('input', function (e) {
       state.query = e.target.value.toLowerCase().trim();
       buildIndex();
+      buildCodeIndex();
       applyVisibility();
     });
 
@@ -681,7 +836,11 @@
 
     window.addEventListener('keydown', function (e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.key === 'Escape') deselect();
+      var viewerOpen = dom.viewer && !dom.viewer.hidden;
+      if (e.key === 'Escape') { if (viewerOpen) closeViewer(); else deselect(); }
+      else if (viewerOpen && e.key === 'ArrowRight') stepFile(1);
+      else if (viewerOpen && e.key === 'ArrowLeft') stepFile(-1);
+      else if (viewerOpen) return;
       else if (e.key === '+' || e.key === '=') setZoom(state.zoom + 0.12);
       else if (e.key === '-') setZoom(state.zoom - 0.12);
       else if (e.key === '0') fitView();
@@ -706,6 +865,7 @@
     updateWorldSize();
     applyTransform();
     bindControls();
+    bindViewer();
 
     requestAnimationFrame(function () {
       updateWorldSize();

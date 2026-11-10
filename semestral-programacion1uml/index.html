@@ -98,6 +98,9 @@
 
           <div class="side-head">Índice de clases</div>
           <div id="classIndex"></div>
+
+          <div class="side-head">Código fuente <span class="side-count" id="codeCount"></span></div>
+          <div id="codeIndex"></div>
         </div>
       </aside>
 
@@ -141,6 +144,35 @@
             <div class="legend-item"><span class="glyph" style="color:var(--edge-2)">→</span> Asociación</div>
           </div>
         </div>
+
+        <!-- Visor de código fuente -->
+        <section class="code-viewer" id="codeViewer" hidden aria-label="Código fuente">
+          <div class="cv-head">
+            <span class="sw"></span>
+            <div class="cv-titles">
+              <div class="cv-title-row">
+                <h2 id="cvName">Archivo</h2>
+                <div class="cv-meta" id="cvMeta"></div>
+              </div>
+              <span class="cv-path" id="cvPath"></span>
+            </div>
+            <div class="cv-actions">
+              <button class="cv-btn" id="cvDiagram" title="Ver esta clase en el diagrama">Ver en diagrama</button>
+              <button class="cv-btn" id="cvCopy" title="Copiar el código">Copiar</button>
+              <button class="ibtn" id="cvPrev" title="Archivo anterior (←)" aria-label="Archivo anterior">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+              </button>
+              <span class="cv-pos" id="cvPos"></span>
+              <button class="ibtn" id="cvNext" title="Archivo siguiente (→)" aria-label="Archivo siguiente">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+              </button>
+              <button class="ibtn" id="cvClose" title="Cerrar y volver al diagrama (Esc)" aria-label="Cerrar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="cv-body"><div class="code-lines" id="cvCode"></div></div>
+        </section>
       </main>
 
       <!-- Inspector -->
@@ -172,6 +204,7 @@
   </div>
 
   <script src="assets/data.js"></script>
+  <script src="assets/codigo.js"></script>
   <script src="assets/app.js"></script>
 </body>
 </html>
